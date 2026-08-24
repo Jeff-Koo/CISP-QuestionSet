@@ -4,13 +4,29 @@
 # pip install markdown weasyprint
 
 import argparse
+import os
+import re
 import markdown
 from weasyprint import HTML
+
+# Docx-exported MD prefixes options/images/notes with a tab; Markdown treats that as <pre>.
+# Peel one indent level only (keeps nested "\t> \t- item" usable as blockquote).
+_LEADING_INDENT = re.compile(r'^(?:\t| {4})', re.M)
+_MC_OPTION = re.compile(r'^([A-D]\..+)$', re.M)
+
+
+def _unindent_leading(md_text):
+    return _LEADING_INDENT.sub('', md_text)
+
+
+def _wrap_mc_options(md_text):
+    return _MC_OPTION.sub(r'<p class="mc-option">\1</p>', md_text)
+
 
 def convert_md_to_beautiful_pdf(md_file_path, output_pdf_path):
     # 1. 讀取 Markdown 內容
     with open(md_file_path, 'r', encoding='utf-8') as f:
-        md_text = f.read()
+        md_text = _wrap_mc_options(_unindent_leading(f.read()))
     
     # 2. 將 MD 轉為 HTML 結構（啟用表格、程式碼高亮等擴充功能）
     html_content = markdown.markdown(md_text, extensions=['extra', 'codehilite', 'toc'])
@@ -39,6 +55,7 @@ def convert_md_to_beautiful_pdf(md_file_path, output_pdf_path):
             line-height: 1.7;
             color: #2d3748;
             font-size: 10.5pt;
+            counter-reset: qnum;
         }}
         
         /* 標題樣式：去除生硬的線條，改用現代感優雅設計 */
@@ -70,11 +87,32 @@ def convert_md_to_beautiful_pdf(md_file_path, output_pdf_path):
             margin-bottom: 16px;
             text-align: justify;
         }}
-        ul, ol {{
+        .mc-option {{
+            margin: 4px 0 4px 1.75em;
+            text-align: left;
+        }}
+        ul {{
             margin-bottom: 16px;
             padding-left: 24px;
         }}
-        li {{
+        /* 每題是獨立 <ol>；用文件級 counter 連續編號 */
+        ol {{
+            list-style: none;
+            padding-left: 0;
+            margin: 1.2em 0 0.4em;
+        }}
+        ol > li {{
+            counter-increment: qnum;
+            padding-left: 2em;
+            text-indent: -2em;
+            margin-bottom: 6px;
+        }}
+        ol > li::before {{
+            content: counter(qnum) ". ";
+            font-weight: 600;
+            color: #1a365d;
+        }}
+        ul li {{
             margin-bottom: 6px;
         }}
         
@@ -133,6 +171,13 @@ def convert_md_to_beautiful_pdf(md_file_path, output_pdf_path):
             color: inherit;
             padding: 0;
         }}
+        
+        img {{
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 12px auto;
+        }}
     </style>
     </head>
     <body>
@@ -141,11 +186,16 @@ def convert_md_to_beautiful_pdf(md_file_path, output_pdf_path):
     </html>
     """
     
-    # 4. 輸出為 PDF
-    HTML(string=full_html).write_pdf(output_pdf_path)
+    # 4. 輸出為 PDF（base_url 需以 / 結尾，urljoin 才不會吃掉目錄名）
+    base_url = os.path.dirname(os.path.abspath(md_file_path)) + os.sep
+    HTML(string=full_html, base_url=base_url).write_pdf(output_pdf_path)
     print(f"轉換成功！PDF 已儲存至: {output_pdf_path}")
 
 if __name__ == '__main__':
+    assert _unindent_leading('\t![](./pic/19.png)\n') == '![](./pic/19.png)\n'
+    assert _unindent_leading('![](./x.png)\n\tA.策略\n') == '![](./x.png)\nA.策略\n'
+    assert _unindent_leading('\t> note\n') == '> note\n'
+    assert 'class="mc-option"' in _wrap_mc_options(_unindent_leading('\tA.策略\n'))
     parser = argparse.ArgumentParser(description='Convert Markdown to PDF')
     parser.add_argument('input', nargs='?', default='input.md', help='input Markdown file (default: input.md)')
     parser.add_argument('output', nargs='?', default='output.pdf', help='output PDF file (default: output.pdf)')
